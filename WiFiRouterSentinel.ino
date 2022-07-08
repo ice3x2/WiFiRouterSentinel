@@ -13,7 +13,7 @@
 #define OPTION_DATA_AP_PASSWORD_LEN = 64;
 #define OPTION_DATA_AP_EVENT_ADDR_LEN = 128;
 
-
+#define SETUP_PAGE "<html><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no'><title>WiFi Router Sentinel</title><style>body{background: #bbb;}label{width: 90px;text-align: right;display: inline-block; padding-right: 5px;}.input-ip{width: 50px; max-width: calc((100% - 100px) / 5)}input{width: 225px; max-width: calc(100% - 100px);}button{width: 200px; margin-left: 20px;}</style><body><h1>Setup</h1><br/><form action='' method='get'><input type='hidden' id='api' value='save'/><h3>WiFi</h3><div><label for='ssid'>SSID: </label><input type='text' name='ssid' value='%s'/></div><div><label for='password'>password: </label><input type='text' name='password' value='%s'/></div><div><label for='reconnectCount'>RE count: </label><input type='number' name='reconnectCount' value='%ld'/></div><div><label for='reconnectInterval'>RE interval: </label><input type='number' name='reconnectInterval' value='%ld'/></div><br/><h3>Ping</h3><div><label for='ip0'>IP Address: </label><input type='number' class='input-ip' id='ip0' value='%d'/>.<input type='number' class='input-ip' id='ip1' value='%d'/>.<input type='number' class='input-ip' id='ip2' value='%d'/>.<input type='number' class='input-ip' id='ip3' value='%d'/></div><div><label for='interval'>Interval: </label><input type='number' name='interval' value='%ld'/></div><div><label for='timeout'>Timeout: </label><input type='number' name='timeout' value='%ld'/></div><br/><h3>Callback</h3><div><label for='eventUrl'>Event url: </label><input type='text' name='eventUrl' value='%s'/></div><br/><br/> <button type='submit' >Save</button></form></body></html>"
 
 typedef struct Option {
   String ssid = "unknown";
@@ -52,7 +52,8 @@ typedef struct Option {
 } Option;
 
 Option _option;
-
+bool _isSetupMode = false;
+ESP8266WebServer* _webServer = NULL;
 
 void setup() {
   Serial.begin(115200);
@@ -64,16 +65,67 @@ void setup() {
     saveConfig();
   } else {
     _option.printLog();
-  }
-  
+  }  
+}
+
+void releaseWebServer() {
+    if(_webServer != NULL) {
+        _webServer->close();
+        _webServer->stop();
+        delete _webServer;
+        _webServer = NULL;
+    }
+}
+
+
+void startSetupMode() {
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP("WiFiRouterSentinel", "");
+  releaseWebServer();
+  _webServer = new ESP8266WebServer(80);
+    
+  _webServer->on("/", HTTP_GET, [&]{ onHttpRequest(); });
+
+  _webServer->begin();
 
   
 }
 
+void onHttpRequest() {
+  String api = _webServer->arg("api");
+  if(api == "save") {
+    String ssid = _webServer->arg("ssid");
+    Serial.println(ssid);
+    String password = _webServer->arg("password");
+    String reconnectCount = _webServer->arg("reconnectCount");
+    String reconnectInterval = _webServer->arg("reconnectInterval");
+    String ip0 = _webServer->arg("ip0");
+    Serial.println(ip0);
+    String ip1 = _webServer->arg("ip1");
+    String ip2 = _webServer->arg("ip2");
+    String ip3 = _webServer->arg("ip3");
+    String interval = _webServer->arg("interval");
+    String timeout = _webServer->arg("timeout");
+    String eventUrl = _webServer->arg("eventUrl");
+  }
+
+  char buffer[3072];
+  int ipAddress[4];
+  numberToIpAddress(_option.pingAddr, ipAddress);
+  sprintf(buffer, SETUP_PAGE, _option.ssid, _option.apPassword, _option.wifiReconnectCount, _option.wifiReconnectInterval, ipAddress[0],ipAddress[1],ipAddress[2],ipAddress[3],_option.pingDelay,_option.pingTimeout,_option.eventAddr);
+  _webServer->send(200, "text/html", buffer); 
+  
+}
+
+
 void loop() {
-  delay(1000);
-  Serial.println("lopo");
-  // put your main code here, to run repeatedly:
+  if(!_isSetupMode) {
+    startSetupMode();
+    _isSetupMode =true;
+  }
+  if(_isSetupMode) {
+    _webServer->handleClient();
+  }
 
 }
 
@@ -114,6 +166,14 @@ boolean loadConfig() {
   return true;
 }
 
+void numberToIpAddress(long addr, int* resultIP) {  
+  resultIP[3] = (addr & 0xFF);
+  resultIP[2] = ((addr >> 8) & 0xFF);
+  resultIP[1] = ((addr >> 16) & 0xFF);
+  resultIP[0] = ((addr >> 24) & 0xFF);
+  
+}
+
 int readLongFromEEPROM(long address, long* value) {
 
   long four = EEPROM.read(address);
@@ -147,6 +207,8 @@ int writeStringToEEPROM(int address, String* value) {
   }
   return address;
 }
+
+
 
 int readStringFromEEPROM(int address,String* value) {
   long len;
